@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Semáforo ESP32 — Status</title>
+<style>
+  :root {
+    --housing: #adadad;
+    --box-gray: #ababab;
+    --green: #65f538;
+    --yellow: #fff34b;
+    --red: #ff2b2b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #ffffff;
+    font-family: Arial, Helvetica, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: #111;
+  }
+  header {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 18px 24px 0;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 800; }
+  #conn {
+    font-size: 13px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 2px solid #111;
+    background: #eee;
+  }
+  #conn.on { background: #d7ffd0; }
+  #conn.off { background: #ffe1e1; }
+  main {
+    flex: 1;
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 80px;
+    padding: 30px 24px 10px;
+    flex-wrap: wrap;
+  }
+  /* STATUS box — fiel al Figma: rectángulo gris, borde negro grueso */
+  .status-wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  #statusBox {
+    background: var(--box-gray);
+    border: 7px solid #000;
+    border-radius: 24px;
+    min-width: 340px;
+    max-width: 420px;
+    padding: 18px 30px 22px;
+    text-align: center;
+  }
+  #statusBox .label { font-size: 56px; font-weight: 900; letter-spacing: 2px; line-height: 1; }
+  #statusBox .light {
+    font-size: 34px; font-weight: 900; margin-top: 8px; letter-spacing: 1px;
+  }
+  #count {
+    font-size: 72px; font-weight: 900; line-height: 1; margin: 6px 0 0;
+    font-variant-numeric: tabular-nums;
+  }
+  #count small { font-size: 28px; }
+  #sub { font-size: 15px; font-weight: 700; margin-top: 6px; }
+  #pinInfo {
+    font-size: 15px; font-weight: 700;
+    background: #fff; border: 3px solid #000; border-radius: 12px;
+    padding: 8px 14px;
+  }
+  #barWrap { width: 340px; max-width: 90vw; height: 14px; border: 3px solid #000; border-radius: 999px; overflow: hidden; background: #ddd; }
+  #bar { height: 100%; width: 100%; background: #111; transition: width 0.2s linear; }
+  #demoBadge {
+    display: none; font-size: 13px; font-weight: 800;
+    background: #fff3b0; border: 2px dashed #000; border-radius: 10px; padding: 6px 12px;
+  }
+  /* Semáforo — orden del Figma: verde arriba, amarillo medio, rojo abajo */
+  .housing {
+    background: var(--housing);
+    border: 14px solid #000;
+    border-radius: 90px;
+    padding: 34px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+  }
+  .light-bulb {
+    width: 130px; height: 130px;
+    border-radius: 50%;
+    border: 10px solid #000;
+    background: #7a7a7a;
+    opacity: 0.35;
+    transition: opacity 0.15s, box-shadow 0.15s, background 0.15s;
+  }
+  .light-bulb.green { background: var(--green); }
+  .light-bulb.yellow { background: var(--yellow); }
+  .light-bulb.red { background: var(--red); }
+  .light-bulb.active { opacity: 1; }
+  .light-bulb.active.green { box-shadow: 0 0 45px 8px rgba(101,245,56,.9); }
+  .light-bulb.active.yellow { box-shadow: 0 0 45px 8px rgba(255,243,75,.9); }
+  .light-bulb.active.red { box-shadow: 0 0 45px 8px rgba(255,43,43,.9); }
+  footer { padding: 10px 20px 26px; font-size: 13px; color: #444; text-align: center; }
+  footer code { background: #f1f1f1; padding: 1px 6px; border-radius: 6px; }
+  @media (max-width: 700px) {
+    main { gap: 36px; }
+    #statusBox .label { font-size: 40px; }
+    #count { font-size: 56px; }
+    .light-bulb { width: 100px; height: 100px; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>🚦 Semáforo ESP32</h1>
+    <div id="conn" class="off">● desconectado</div>
+  </header>
+
+  <main>
+    <!-- Izquierda: STATUS (diseño Figma) -->
+    <div class="status-wrap">
+      <div id="statusBox">
+        <div class="label">STATUS</div>
+        <div class="light" id="lightName">—</div>
+        <div id="count">--<small> s</small></div>
+        <div id="sub">cambio de luz en cuenta regresiva</div>
+      </div>
+      <div id="barWrap"><div id="bar"></div></div>
+      <div id="pinInfo">Pin — · —</div>
+      <div id="demoBadge">MODO DEMO — sin señal del ESP32 (simulando ciclo)</div>
+    </div>
+
+    <!-- Derecha: semáforo -->
+    <div class="housing" aria-label="Semáforo">
+      <div class="light-bulb green" id="bulb-green"></div>
+      <div class="light-bulb yellow" id="bulb-yellow"></div>
+      <div class="light-bulb red" id="bulb-red"></div>
+    </div>
+  </main>
+
+  <footer>
+    Rojo: pin 2 · 20 s &nbsp;|&nbsp; Amarillo: pin 4 · 5 s &nbsp;|&nbsp; Verde: pin 5 · 15 s
+    &nbsp;·&nbsp; API: <code>GET /api/state</code> · ESP32: <code>POST /api/state</code>
+  </footer>
+
+<script>
+  const NAMES = { red: 'ROJO', yellow: 'AMARILLO', green: 'VERDE' };
+  const COLORS = { red: '#ff2b2b', yellow: '#e6d200', green: '#2ecc40' };
+  // Mismos tiempos/pines que el servidor y el .ino (para el modo sin servidor)
+  const DUR = { green: 15, yellow: 5, red: 20 };
+  const PIN = { green: 5, yellow: 4, red: 2 };
+  const ORDER = ['green', 'yellow', 'red'];
+  const TOTAL = 40;
+  const boot = performance.now();
+  let last = { light: null, remaining: 0, duration: 1 };
+  let lastPoll = performance.now();
+
+  // Simulación local: se usa cuando la página se abre sin servidor
+  // (doble clic al archivo) para que igual se vea el semáforo funcionando.
+  function localState() {
+    const pos = ((performance.now() - boot) / 1000) % TOTAL;
+    let acc = 0;
+    for (const l of ORDER) {
+      if (pos < acc + DUR[l]) {
+        return { light: l, remaining: (acc + DUR[l]) - pos, duration: DUR[l],
+                 pin: PIN[l], connected: false, simulated: true, local: true };
+      }
+      acc += DUR[l];
+    }
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch('/api/state', { cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      const s = await r.json();
+      s.local = false;
+      last = s;
+      lastPoll = performance.now();
+      render(s, s.remaining);
+    } catch (e) {
+      // Sin servidor (p. ej. abriste el archivo con doble clic):
+      // simular el ciclo en el navegador para que la página igual funcione.
+      const s = localState();
+      last = s;
+      lastPoll = performance.now();
+      render(s, s.remaining);
+    }
+  }
+
+  function render(s, remaining) {
+    const light = s.light || 'red';
+    // Focos
+    for (const l of ['red', 'yellow', 'green']) {
+      document.getElementById('bulb-' + l).classList.toggle('active', l === light);
+    }
+    // Textos
+    document.getElementById('lightName').textContent = NAMES[light] || light.toUpperCase();
+    document.getElementById('lightName').style.color = '#000';
+    const rem = Math.max(0, Math.ceil(remaining));
+    document.getElementById('count').innerHTML = rem + '<small> s</small>';
+    document.getElementById('pinInfo').textContent =
+      'Pin ' + s.pin + ' activo · ' + NAMES[light] + ' dura ' + s.duration + ' s';
+    // Barra de progreso
+    const pct = Math.max(0, Math.min(1, remaining / (s.duration || 1))) * 100;
+    const bar = document.getElementById('bar');
+    bar.style.width = pct + '%';
+    bar.style.background = COLORS[light] || '#111';
+    document.getElementById('statusBox').style.background = '#ababab';
+    // Conexión
+    if (s.local) {
+      const el = document.getElementById('conn');
+      el.className = 'off';
+      el.textContent = '● sin servidor — demo local';
+      document.getElementById('demoBadge').style.display = 'block';
+      document.getElementById('demoBadge').textContent =
+        'DEMO LOCAL — abre la página con python3 server.py para conectar el ESP32';
+    } else {
+      setConn(s.connected, false);
+      const badge = document.getElementById('demoBadge');
+      badge.textContent = 'MODO DEMO — sin señal del ESP32 (simulando ciclo)';
+      badge.style.display = s.simulated ? 'block' : 'none';
+    }
+  }
+
+  function setConn(connected, error) {
+    const el = document.getElementById('conn');
+    if (error) {
+      el.className = 'off';
+      el.textContent = '● error de servidor';
+      return;
+    }
+    el.className = connected ? 'on' : 'off';
+    el.textContent = connected ? '● ESP32 conectado' : '● ESP32 desconectado';
+  }
+
+  // Interpolación local para que la cuenta regresiva se vea fluida entre polls
+  setInterval(() => {
+    if (!last.light) return;
+    const elapsed = (performance.now() - lastPoll) / 1000;
+    render(last, last.remaining - elapsed);
+  }, 200);
+
+  poll();
+  setInterval(poll, 500);
+</script>
+</body>
+</html>
