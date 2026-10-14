@@ -13,7 +13,10 @@ Uso:
     python3 server.py [puerto]
     p.ej. python3 server.py 8000
 """
+import glob
 import json
+import os
+import re
 import sys
 import threading
 import time
@@ -65,6 +68,67 @@ def current_state():
         "durations": DURATIONS,
         "pins": PINS,
     }
+
+
+def _note_esp(light, remaining):
+    """Guarda la ultima senal del ESP32 (la usa la pagina web)."""
+    now = time.monotonic()
+    with _state_lock:
+        global _esp_light, _esp_remaining, _esp_at
+        _esp_light, _esp_remaining, _esp_at = light, remaining, now
+
+
+STATE_RE = re.compile(r"STATE:(red|yellow|green):(\d+(?:\.\d+)?)")
+SERIAL_BAUD = int(os.environ.get("SERIAL_BAUD", "115200"))
+
+
+def _detect_serial_port():
+    env = os.environ.get("SERIAL_PORT")
+    if env:
+        return env
+    for pat in ("/dev/cu.usbserial*", "/dev/cu.SLAB_USBtoUART*",
+                "/dev/cu.wchusbserial*", "/dev/cu.usbmodem*",
+                "COM3", "COM4", "COM5", "COM6"):
+        for p in sorted(glob.glob(pat)):
+            if "Bluetooth" not in p:
+                return p
+        if os.name == "nt" and os.path.exists(pat):
+            return pat
+    return None
+
+
+def _start_serial_reader():
+    """Hilo que lee STATE:... del ESP32 por cable USB (opcional)."""
+    port = _detect_serial_port()
+    if not port:
+        print("USB: no se detecto ESP32. Modo demo hasta conectar el cable.")
+        print("     Tip: SERIAL_PORT=/dev/cu.usbserial-XXXX python3 server.py 8000")
+        return
+    try:
+        import serial
+    except ImportError:
+        print("USB: falta pyserial -> pip install pyserial (sin el, solo modo demo).")
+        return
+    print(f"USB: leyendo ESP32 en {port} a {SERIAL_BAUD} baudios...")
+
+    def _run():
+        while True:
+            try:
+                with serial.Serial(port, SERIAL_BAUD, timeout=1) as ser:
+                    while True:
+                        line = ser.readline().decode("utf-8", "replace")
+                        m = STATE_RE.search(line)
+                        if not m:
+                            continue
+                        light = m.group(1)
+                        remaining = max(0.0, min(float(DURATIONS[light]), float(m.group(2))))
+                        _note_esp(light, remaining)
+                        print(f"[USB] {light} restante={remaining:.1f}s", flush=True)
+            except Exception as e:
+                print(f"USB: error ({e}), reintentando en 3 s...", flush=True)
+            time.sleep(3)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -128,10 +192,7 @@ class Handler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             remaining = float(DURATIONS[light])
         remaining = max(0.0, min(float(DURATIONS[light]), remaining))
-        now = time.monotonic()
-        with _state_lock:
-            global _esp_light, _esp_remaining, _esp_at
-            _esp_light, _esp_remaining, _esp_at = light, remaining, now
+        _note_esp(light, remaining)
         print(f"[ESP32] {light} restante={remaining:.1f}s", flush=True)
         self._send_json({"ok": True, "state": current_state()})
 
@@ -143,6 +204,7 @@ def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print(f"Semaforo: http://localhost:{port}/  (POST del ESP32 a /api/state)")
+    _start_serial_reader()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
